@@ -23,52 +23,56 @@ Needs Python 3.10+ (`websockets>=14` renamed `extra_headers` to `additional_head
 
 | File | What it is |
 |---|---|
-| `agent.py` | The guide's agent with the fixes below. Every deviation is marked `FIX:`. |
-| `agent_verbatim.py` | The guide's full example byte-for-byte, to reproduce the failures. |
+| `agent.py` | The guide's current agent, plus a couple of local conveniences (a real default host, transcript/tool-call printing, Ctrl-C handling). |
+| `agent_verbatim.py` | The guide's full example byte-for-byte as it read *before* the 2026-09-02 fix, kept to reproduce the findings below. |
 
 ## Findings
 
-Verified against `wss://api.dev.poly.ai/v1/realtime` on 2026-09-02.
+Verified against `wss://api.dev.poly.ai/v1/realtime` on 2026-09-02. Findings 1 and 3–10 were
+fixed upstream in the guide the same day ([`dialog-rsn-1__eap_docs`](https://github.com/PolyAI-LDN/dialog-rsn-1__eap_docs),
+`dialog-rsn-1/guides/python-from-scratch.mdx`); `agent_verbatim.py` reproduces them as they
+originally read. Finding 2 is still open.
 
-### 1. `pip install websockets sounddevice` leaves out numpy
+### 1. ~~`pip install websockets sounddevice` leaves out numpy~~ — fixed in the guide
 
-Blocker. The guide's install line is missing `numpy`, and the failure is not the subtle kind
-you'd hope for. `sd.InputStream` raises at construction, before any audio flows:
+Was a blocker. The guide's install line was missing `numpy`, and the failure was not the subtle
+kind you'd hope for. `sd.InputStream` raised at construction, before any audio flowed:
 
 ```
 FAILED at mic construction/start: ModuleNotFoundError: No module named 'numpy'
 ```
 
 `sounddevice` declares only `CFFI`, so nothing pulls numpy in transitively, and the guide's
-`(indata * 32767).astype("int16")` needs it anyway. The install line should be
-`pip install 'websockets>=14' sounddevice numpy`.
+`(indata * 32767).astype("int16")` needs it anyway. The guide's install line now reads
+`pip install websockets sounddevice numpy`.
 
-### 2. `wss://<your-realtime-host>/v1/realtime` is a placeholder
+### 2. `wss://<your-realtime-host>/v1/realtime` is a placeholder — still open
 
 Nothing in the guide or the quickstart says what the host is, so the copied script fails at
-`connect()`. The real one is `wss://api.dev.poly.ai/v1/realtime`; `agent.py` reads
-`DIALOGUE_URL` and defaults to it.
+`connect()`. This is the same placeholder used across every guide, the quickstart, and the
+reference, so it's out of scope to fix in this one guide alone. The real one is
+`wss://api.dev.poly.ai/v1/realtime`; `agent.py` reads `DIALOGUE_URL` and defaults to it.
 
-### 3. "Three concurrent tasks" — there are two
+### 3. ~~"Three concurrent tasks" — there were two~~ — fixed in the guide
 
-Guide line 63: "A real agent needs to send audio, watch for a turn to start, and process
-incoming events, all at once. Three concurrent tasks, raced rather than run in sequence."
-The code below it creates two: `send_audio_task` and `event_handler_task`. Watching for a
-turn to start is not a task, it's a branch inside the event handler. Either the prose should
-say two, or a third task is missing from the example.
+Guide line 63 used to read: "A real agent needs to send audio, watch for a turn to start, and
+process incoming events, all at once. Three concurrent tasks, raced rather than run in
+sequence." The code below it created two: `send_audio_task` and `event_handler_task`. Watching
+for a turn to start was never a task, it's a branch inside the event handler. The prose now says
+two.
 
-### 4. No `error` branch, which the guide's own quickstart calls mandatory
+### 4. ~~No `error` branch, which the guide's own quickstart calls mandatory~~ — fixed in the guide
 
-`event_handler_task` handles four event types and `error` isn't one of them. The quickstart is
+`event_handler_task` handled four event types and `error` wasn't one of them. The quickstart is
 unambiguous about why that matters: every failure "answers with an `error` event and **leaves
 the connection open**", so "skip the branch and a failed generation prints an empty string and
-exits zero." In the audio agent it's worse than that, because nothing terminates the loop, so a
-failed turn leaves the process sitting there silently forever. Same for
-`response.done(status: "failed")`.
+exits zero." In the audio agent it was worse than that, because nothing terminated the loop, so
+a failed turn left the process sitting there silently forever. Same for
+`response.done(status: "failed")`. The guide's `event_handler_task` now raises on both.
 
-### 5. No `blocksize`, so macOS sends ~1065 WebSocket messages a second
+### 5. ~~No `blocksize`, so macOS sends ~1065 WebSocket messages a second~~ — fixed in the guide
 
-Left unset, `sounddevice` takes the device default, which here is **15 samples — 0.94ms** per
+Left unset, `sounddevice` took the device default, which here was **15 samples — 0.94ms** per
 callback. Measured:
 
 ```
@@ -80,40 +84,43 @@ samples per callback: [15]
 
 Three times more protocol than payload. The reference specifies the detector's framing
 ("five 32ms frames"), so `blocksize=512` matches it: 158 frames for a 2s utterance instead
-of 5370. Both work — the server accepted the 15-sample frames and transcribed correctly —
-but the guide is teaching the pathological default.
+of 5370. Both worked — the server accepted the 15-sample frames and transcribed correctly —
+but the guide was teaching the pathological default. It now sets `BLOCKSIZE = 512`.
 
-### 6. The task race never fires, so `asyncio.wait` is decorative
+### 6. ~~The task race never fired, so `asyncio.wait` was decorative~~ — fixed in the guide
 
-`event_handler_task` loops on `async for raw in ws` with no exit path, and `send_audio_task`
-loops forever. Neither task can complete, so `asyncio.wait(..., return_when=FIRST_COMPLETED)`
-only returns when something raises. The prose (line 102) sells the pattern as what "keeps a
-clean Ctrl-C from turning into a pile of dangling tasks", but Ctrl-C is the *only* way out.
+`event_handler_task` looped on `async for raw in ws` with no exit path, and `send_audio_task`
+looped forever. Neither task could complete, so `asyncio.wait(..., return_when=FIRST_COMPLETED)`
+only returned on Ctrl-C. The prose sold the pattern as what "keeps a clean Ctrl-C from turning
+into a pile of dangling tasks", but Ctrl-C was the *only* way out. Now that `error` and
+`response.done(status: "failed")` raise (#4), a failed turn ends the race too, which is what
+the prose describes.
 
-### 7. `asyncio.wait` doesn't re-raise, so a crashed task disappears
+### 7. ~~`asyncio.wait` doesn't re-raise, so a crashed task disappeared~~ — fixed in the guide
 
-Following on from #6: when a task does raise, `asyncio.wait` returns normally rather than
-propagating, unlike `asyncio.gather`. The guide never calls `task.result()`, so the `finally`
-block cancels everything and `main()` returns cleanly on what was actually a crash. `agent.py`
-calls `.result()` on the completed task to surface it.
+Following on from #6: when a task raises, `asyncio.wait` returns normally rather than
+propagating, unlike `asyncio.gather`. The guide never called `task.result()`, so the `finally`
+block cancelled everything and `main()` returned cleanly on what was actually a crash. The guide
+now calls `.result()` on each completed task to surface it.
 
-### 8. `TOOLS[name]` raises `KeyError` on a tool the model invents
+### 8. ~~`TOOLS[name]` raised `KeyError` on a tool the model invents~~ — fixed in the guide
 
-One hallucinated tool name takes down the event loop, and per #7 it does so silently. Answering
-the call with an error payload keeps the conversation alive.
+One hallucinated tool name took down the event loop, and per #7 it did so silently. The guide's
+`handle_tool_call` now looks the tool up with `.get` and answers with an error payload instead,
+keeping the conversation alive.
 
-### 9. `mic.stop()` never releases the device
+### 9. ~~`mic.stop()` never released the device~~ — fixed in the guide
 
-The `finally` block stops the stream but never calls `mic.close()`, so the input device stays
-claimed until the process exits.
+The `finally` block stopped the stream but never called `mic.close()`, so the input device
+stayed claimed until the process exited. The guide's `finally` block now calls both.
 
-### 10. The intro promises a text path the example doesn't have
+### 10. ~~The intro promised a text path the example didn't have~~ — fixed in the guide
 
 "It starts on text turns, the same add-then-respond shape from the quickstart, then adds tool
-calling and, finally, real audio input." The full example is audio-only — there is no
-`conversation.item.create` with `input_text` anywhere in it. So the one part a reader can test
-without a working microphone, tool calling, is the part they can't reach. `agent.py --say`
-adds it back in six lines.
+calling and, finally, real audio input." The full example was audio-only — there was no
+`conversation.item.create` with `input_text` anywhere in it. So the one part a reader could test
+without a working microphone, tool calling, was the part they couldn't reach. The guide's full
+example now takes a `--say` flag that sends one text turn instead of opening the mic.
 
 ## Confirmed accurate
 

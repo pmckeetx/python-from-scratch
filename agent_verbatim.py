@@ -1,3 +1,7 @@
+# The "Python from scratch" guide's full example, byte-for-byte, as it read
+# before the 2026-09-02 fix (see README.md). Kept to reproduce the failures the
+# findings describe; agent.py is the current, fixed guide plus a few local
+# conveniences.
 import asyncio
 import base64
 import json
