@@ -50,8 +50,10 @@ FAILED at mic construction/start: ModuleNotFoundError: No module named 'numpy'
 
 Nothing in the guide or the quickstart says what the host is, so the copied script fails at
 `connect()`. This is the same placeholder used across every guide, the quickstart, and the
-reference, so it's out of scope to fix in this one guide alone. The real one is
-`wss://api.dev.poly.ai/v1/realtime`; `agent.py` reads `DIALOGUE_URL` and defaults to it.
+reference, so it's out of scope to fix in this one guide alone. `agent.py` reads `DIALOGUE_URL`
+and defaults to the prod host, `wss://api.us.poly.ai/v1/realtime`; set `DIALOGUE_URL` to point
+at dev (`wss://api.dev.poly.ai/v1/realtime`, what the findings below were verified against)
+instead.
 
 ### 3. ~~"Three concurrent tasks" — there were two~~ — fixed in the guide
 

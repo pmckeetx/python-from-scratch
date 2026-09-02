@@ -18,7 +18,7 @@ import websockets
 # The guide hardcodes "wss://<your-realtime-host>/v1/realtime", a placeholder shared
 # across every guide/quickstart/reference page. Read the real one from the
 # environment so the script is actually runnable.
-URL = os.environ.get("DIALOGUE_URL", "wss://api.dev.poly.ai/v1/realtime")
+URL = os.environ.get("DIALOGUE_URL", "wss://api.us.poly.ai/v1/realtime")
 API_KEY = os.environ["DIALOGUE_API_KEY"]
 SAMPLE_RATE = 16000  # Dialog-RSN-1's native rate, so audio.input.format.rate is omitted
 BLOCKSIZE = 512  # 512 samples @ 16kHz = 32ms, matching the detector's frame size
